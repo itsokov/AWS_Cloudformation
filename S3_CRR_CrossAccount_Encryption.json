@@ -1,0 +1,177 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Create and configure cross-region replication for an ecrypted S3 bucket to another AWS account\n",
+	"Parameters":{
+		"SourceS3": {
+			"Type":"String",
+			"Description":"The source S3 bucket for configuring cross "
+		},
+		"DestinationS3": {
+			"Type":"String",
+			"Description":"The destination S3 bucket for configuring cross "	
+		},
+		"SourceS3Key": {
+			"Type":"String",
+			"Description":"The source S3 bucket encryption KMS key ARN"	
+		},
+		"DestinationS3Key": {
+			"Type":"String",
+			"Description":"The destination S3 bucket encryption KMS CMK ARN"	
+		},
+		"DestinationAWSAccount": {
+			"Type":"String",
+			"Description":"The destination AWS account where the bucket is located"	
+		},
+		"DestinationRegion":{
+			"Type":"String",
+			"Description":"The destination AWS account region where the bucket is located",
+			"Default" : "eu-north-1"
+		}
+	},
+	"Resources": {
+
+		"ReplicaRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Statement": [
+						{
+							"Action": [
+								"sts:AssumeRole"
+							],
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [
+									"s3.amazonaws.com"
+								]
+							}
+						}
+					]
+				},
+				"RoleName": {"Fn::Sub" : "s3_crr_role_${SourceS3}_${AWS::StackName}"}
+			}
+		},
+		
+        "ReplicaPolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+								"s3:ListBucket",
+								"s3:GetReplicationConfiguration",
+								"s3:GetObjectVersionForReplication",
+								"s3:GetObjectVersionAcl",
+								"s3:GetObjectVersionTagging"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::Sub": "arn:aws:s3:::${SourceS3}"
+                                },
+                                {
+                                    "Fn::Sub": "arn:aws:s3:::${SourceS3}/*"
+                                }
+                            ],
+                            "Effect": "Allow"
+                        },
+						{
+							"Action": [
+								"s3:ReplicateObject",
+								"s3:ReplicateDelete",
+								"s3:ReplicateTags",
+								"s3:GetObjectVersionTagging",
+								"s3:ObjectOwnerOverrideToBucketOwner"
+							],
+							"Effect": "Allow",
+							"Condition": {
+								"StringLikeIfExists": {
+									"s3:x-amz-server-side-encryption": [
+										"aws:kms",
+										"AES256"
+									],
+									"s3:x-amz-server-side-encryption-aws-kms-key-id": [
+										{"Ref": "DestinationS3Key"}
+									]
+								}
+							},
+							"Resource": {"Fn::Sub": "arn:aws:s3:::${DestinationS3}/*"}
+						},
+						{
+							"Action": [
+								"kms:Decrypt"
+							],
+							"Effect": "Allow",
+							"Condition": {
+								"StringLike": {
+									"kms:ViaService": {"Fn::Sub": "s3.${AWS::Region}.amazonaws.com"},
+									"kms:EncryptionContext:aws:s3:arn": [
+										{"Fn::Sub" : "arn:aws:s3:::${SourceS3}/*"}
+									]
+								}
+							},
+							"Resource": [
+								{"Fn::Sub" : "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3"},
+								{"Ref" : "SourceS3Key"}
+							]
+						},
+						{
+							"Action": [
+								"kms:Encrypt"
+							],
+							"Effect": "Allow",
+							"Condition": {
+								"StringLike": {
+									"kms:ViaService": {"Fn::Sub" : "s3.${DestinationRegion}.amazonaws.com"},
+									"kms:EncryptionContext:aws:s3:arn": [
+										{"Fn::Sub" : "arn:aws:s3:::${DestinationS3}/*"}
+									]
+								}
+							},
+							"Resource": [
+								{"Ref" : "DestinationS3Key"}
+							]
+						}
+											
+                    ]
+                },
+				"PolicyName" : {"Fn::Sub" : "s3_crr_policy_${SourceS3}_${AWS::StackName}"},
+                "Roles": [
+                    {
+                        "Ref": "ReplicaRole"
+                    }
+                ]
+            }
+        },	
+	
+		"FGBucketCreation": {
+			"Type": "AWS::S3::Bucket",
+			"Properties": {
+				"BucketName": {"Ref" : "SourceS3"},
+				"ReplicationConfiguration": {
+                    "Role": {
+                        "Fn::GetAtt": [
+                            "ReplicaRole",
+                            "Arn"
+                        ]
+                    },
+                    "Rules": [
+                        {
+                            "Destination": {
+                                "Bucket": {"Fn::Sub": "arn:aws:s3:::${DestinationS3}"},
+                                "StorageClass": "STANDARD",
+								"Account" : {"Ref":"DestinationAWSAccount"},  
+								"AccessControlTranslation" : {"Owner" : "Destination"},
+								"EncryptionConfiguration" : {"ReplicaKmsKeyID" : {"Ref" : "DestinationS3Key"}}
+                            },
+							"SourceSelectionCriteria" : {"SseKmsEncryptedObjects" : { "Status" : "Enabled"}},
+                            "Id": "Backup",
+                            "Prefix": "",
+                            "Status": "Enabled"
+                        }
+                    ]
+                }
+			}
+		}
+	}
+}
