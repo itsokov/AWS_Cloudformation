@@ -1,0 +1,313 @@
+{
+    "Description": "This template deploys an HTTPS Application Load Balancer that has IDP/OIDC authentication. It deploys it's subnets as well. It depends on a pre-existing EC2 instance which it will load balance\n",
+    "Parameters": {
+        "ALBName": {
+            "Description": "The name for the ALB",
+            "Type": "String"
+        },
+        "VPC": {
+            "Type": "AWS::EC2::VPC::Id",
+            "Description": "Choose which VPC the Application Load Balancer should be deployed to"
+        },
+        "SecurityGroupName": {
+            "Description": "Name the Security Group to create for the Application Load Balancer",
+            "Type": "String"
+        },
+		
+		"InstanceID": {
+            "Description": "Name the EC2 instance to be in the LB Target Group",
+            "Type": "String"
+        },
+		"InstanceSecurityGroup": {
+        "Description": "Select the security group of the instance",
+        "Type": "AWS::EC2::SecurityGroup::Id"
+        },
+		"Certificate": {
+            "Description": "ARN of the SSL certificate to be used for the Listener",
+            "Type": "String"
+        },
+		"PublicSubnetNameA": {
+			"Type": "String",
+			"Description": "Subnet Name Tag",
+			"Default": "SubnetAZ1"
+		},
+		"PublicSubnetCIDRA": {
+			"Type": "String",
+			"Description": "IP Address range for the Public Subnet eu-west-1b",
+			"MinLength": "9",
+			"MaxLength": "18",
+			"AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+		},
+		"PublicSubnetNameB": {
+			"Type": "String",
+			"Description": "Subnet Name Tag",
+			"Default": "SubnetAZ2"
+		},
+		"PublicSubnetCIDRB": {
+			"Type": "String",
+			"Description": "IP Address range for the Public Subnet eu-west-1c",
+			"MinLength": "9",
+			"MaxLength": "18",
+			"AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+		},
+		"AZSubnetA" : {
+		"Type" : "String",
+		"Description": "In which AZ would you like to create Subnet A",
+		"Default": "eu-west-1b"
+		},
+		"AZSubnetB" : {
+		"Type" : "String",
+		"Description": "In which AZ would you like to create Subnet B",
+		"Default": "eu-west-1c"
+		},
+		"GatewayId" : {
+		"Type" : "String",
+		"Description": "ID of the Internet Gateway associated with the VPC"
+		}
+
+    },
+	"Resources": {
+		"LoadBalancer": {
+			  "Type" : "AWS::ElasticLoadBalancingV2::LoadBalancer",
+			  "Properties" : {    
+				"IpAddressType" : "ipv4",
+				"Name" : {"Ref":"ALBName"},
+				"Scheme" : "internet-facing",
+				"SecurityGroups" : [{"Ref": "SecurityGroup"}],
+				"Subnets": [{"Ref" : "PublicSubnetA"},{"Ref" : "PublicSubnetB"}],
+				"Type" : "application"
+			  }
+		},
+		"LoadBalancerListener": {
+			"Type": "AWS::ElasticLoadBalancingV2::Listener",
+			"Properties": {
+				"Certificates" : [{"CertificateArn": {"Ref":"Certificate"}}],
+				"LoadBalancerArn": {
+					"Ref": "LoadBalancer"
+				},
+				"Port": 443,
+				"Protocol": "HTTPS",
+				"DefaultActions": [
+					{
+						"Type": "forward",
+						"TargetGroupArn": {"Ref": "DefaultTargetGroup"}
+					}
+				]
+			}
+		},
+
+		"ListenerRule": {
+		  "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+		  "Properties": {
+			"Actions": [{
+			"Type": "authenticate-oidc",
+			"AuthenticateOidcConfig": {
+				"Issuer": "https://ReplaceMe",
+				"AuthorizationEndpoint": "https://ReplaceMe",
+				"TokenEndpoint": "https://ReplaceMe",
+				"UserInfoEndpoint": "https://ReplaceMe",
+				"ClientId": "ReplaceMe",
+				"ClientSecret": "ReplaceMe",
+				"SessionCookieName": "ALBcookie",
+				"SessionTimeout": 3600,
+				"Scope": "openid",
+				"AuthenticationRequestExtraParams": {
+					"display": "page",
+					"prompt": "login"
+				},
+				"OnUnauthenticatedRequest": "authenticate"
+			},
+			"Order": 1
+			},
+			{
+				"Type": "forward",
+				"TargetGroupArn": {"Ref": "DefaultTargetGroup"},
+				"Order": 2
+			}
+			],
+			"Conditions": [{
+			  "Field": "path-pattern",
+			  "Values": [ "/*" ]
+			}],
+			"ListenerArn": { "Ref": "LoadBalancerListener" },
+			"Priority": 1
+		  }
+		},
+		
+        "DefaultTargetGroup": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "Name": {
+                    "Fn::Sub": "${ALBName}-TargetG"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "Port": 8080,
+                "Protocol": "HTTP",
+				"TargetType": "instance",
+				"Targets" : [{"Id" : {"Ref": "InstanceID"}}]
+            }
+        },
+		"SecurityGroup" : {
+		"Type" : "AWS::EC2::SecurityGroup",
+		"Properties" : {
+			"GroupDescription" : "ALB Security Group",
+			"VpcId" : { "Ref" : "VPC" },
+			"SecurityGroupIngress" : [
+			{ "IpProtocol" : "tcp", "FromPort" : "443",  "ToPort" : "443", "CidrIp" : "0.0.0.0/0" }
+			],
+			"SecurityGroupEgress" : [
+			{ "IpProtocol" : "-1", "CidrIp" : "0.0.0.0/0" } ],
+			"GroupName" : {"Ref" : "SecurityGroupName"}
+		  }
+		},
+		"InstanceSecurityGroupInboundRule" : {
+			"Type" : "AWS::EC2::SecurityGroupIngress",
+			"Properties" : {
+				"SourceSecurityGroupId" : {"Ref":"SecurityGroup"},
+				"GroupId" : {"Ref":"InstanceSecurityGroup"},
+				"FromPort" : "8080",
+				"ToPort" : "8080",
+				"IpProtocol" : "tcp",
+				"Description" : "Allows inbound traffic from the ALB"
+			}
+		},
+		
+		
+
+		"PublicRouteTable": {
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {"Ref" : "VPC"},
+				"Tags": [{
+						"Key": "Application",
+						"Value": {
+							"Ref": "AWS::StackName"
+						}
+					},
+					{
+						"Key": "Name",
+						"Value": "ALB Public Subnet Route table"
+					},
+					{
+						"Key": "Network",
+						"Value": "Public"
+					},
+					{
+						"Key": "RouteTableType",
+						"Value": "Public"
+					}
+				]
+			}
+		},
+		"PublicRoute": {
+			"Type": "AWS::EC2::Route",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PublicRouteTable"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"GatewayId": { "Ref" : "GatewayId" }
+			}
+		},
+
+		"PublicSubnetA": {
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {"Ref" : "VPC"},
+				"CidrBlock": {
+					"Ref": "PublicSubnetCIDRA"
+				},
+				"MapPublicIpOnLaunch": true,
+				"AvailabilityZone": {"Ref" : "AZSubnetA"},
+				"Tags": [{
+						"Key": "Application",
+						"Value": {
+							"Ref": "AWS::StackName"
+						}
+					},
+					{
+						"Key": "Organization",
+						"Value": "ReplaceMe"
+					},
+					{
+						"Key": "Name",
+						"Value": {
+							"Ref": "PublicSubnetNameA"
+						}
+					},
+					{
+						"Key": "SubnetType",
+						"Value": "Public"
+					}
+				]
+			}
+		},
+		"PublicSubnetRouteTableAssociationA": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"DependsOn": [
+				"PublicSubnetA"
+			],
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PublicSubnetA"
+				},
+				"RouteTableId": {
+					"Ref": "PublicRouteTable"
+				}
+			}
+		},
+		
+		
+		"PublicSubnetB": {
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {"Ref" : "VPC"},
+				"CidrBlock": {
+					"Ref": "PublicSubnetCIDRB"
+				},
+				"MapPublicIpOnLaunch": true,
+				"AvailabilityZone": {"Ref" : "AZSubnetB"},
+				"Tags": [{
+						"Key": "Application",
+						"Value": {
+							"Ref": "AWS::StackName"
+						}
+					},
+					{
+						"Key": "Organization",
+						"Value": "ReplaceMe"
+					},
+					{
+						"Key": "Name",
+						"Value": {
+							"Ref": "PublicSubnetNameB"
+						}
+					},
+					{
+						"Key": "SubnetType",
+						"Value": "Public"
+					}
+				]
+			}
+		},
+		"PublicSubnetRouteTableAssociationB": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"DependsOn": [
+				"PublicSubnetB"
+			],
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PublicSubnetB"
+				},
+				"RouteTableId": {
+					"Ref": "PublicRouteTable"
+				}
+			}
+		}
+			
+	}
+}
