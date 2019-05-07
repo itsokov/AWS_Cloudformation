@@ -1,0 +1,47 @@
+{
+
+"Description" : "This template modifies an existing role, allowing it to assume another role by attaching an inline policy to it.",
+	"Parameters" : {
+		"RoleModify" : {
+		"Type" : "String",	
+		"Description" : "Role you want to modify.",
+		"Default" : "EC2-Role"
+		},
+		"RoleAssume" : {
+		"Type" : "String",	
+		"Description" : "Role you want to RoleModify to be able to assume.",
+		"Default" : "arn:aws:iam::111111111111:role/RoleName"		
+		},
+		"PolicyName": {
+		"Type" : "String",
+		"Description" : "Name of the policy to attach",
+		"Default" : "PolicyName"	
+		}
+	
+	},
+
+	"Resources" : {
+
+		"Policy": {
+		  "Type" : "AWS::IAM::Policy",
+		  "Properties" : {
+			  "PolicyDocument" : {
+									"Version": "2012-10-17",
+									"Statement": [
+										{
+											"Sid": "VisualEditor0",
+											"Effect": "Allow",
+											"Action": "sts:AssumeRole",
+											"Resource": {"Ref":"RoleAssume"}
+										}
+									]
+								},
+			  "PolicyName" : {"Ref": "PolicyName"},
+			  "Roles" : [{"Ref" : "RoleModify"}]
+			}
+		}
+
+	}
+
+
+}
